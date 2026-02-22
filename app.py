@@ -1,16 +1,17 @@
 import streamlit as st
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import numpy as np
+import os
 
-from core.agents import generate_futures
+from core.agents import generate_one_future
 from core.scoring import score_futures
 from core.simulation import simulate_trajectories
 
-import os
 MINIMAX_MODEL = os.getenv("MINIMAX_MODEL", "MiniMax-M2.5")
 
 st.set_page_config(page_title="Alternate", layout="wide")
+
+AGENT_ORDER = ["Visionary", "Realist", "Capitalist", "Chaos Agent"]
 
 # ── Custom CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -240,12 +241,6 @@ html, body, [class*="css"] {
     letter-spacing: -0.2px;
 }
 
-.model-title .icon{
-    font-family: 'Space Mono', monospace;
-    color: #a78bfa;
-    margin-right: 8px;
-}
-
 .model-desc{
     color: #9ca3af;
     font-size: 0.9rem;
@@ -280,31 +275,30 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ── Agent Explainer Cards (RIGHT AFTER HERO) ──────────────────────────────────
+# ── Agent Explainer Cards ─────────────────────────────────────────────────────
 st.markdown("""
 <div class="model-row">
   <div class="model-card">
-    <div class="model-title"></span>Visionary</div>
+    <div class="model-title">Visionary</div>
     <div class="model-desc">Thinks in long-term asymmetry and exponential upside, prioritizing bold moves that reshape the narrative.</div>
   </div>
 
   <div class="model-card">
-    <div class="model-title"></span>Realist</div>
+    <div class="model-title">Realist</div>
     <div class="model-desc">Optimizes for downside protection, operational feasibility, and survivability under uncertainty.</div>
   </div>
 
   <div class="model-card">
-    <div class="model-title"></span>Capitalist</div>
+    <div class="model-title">Capitalist</div>
     <div class="model-desc">Maximizes leverage, optionality, and economic value while negotiating for structural advantage.</div>
   </div>
 
   <div class="model-card">
-    <div class="model-title"></span>Chaos Agent</div>
+    <div class="model-title">Chaos Agent</div>
     <div class="model-desc">Exploits attention, volatility, and asymmetric disruption to force momentum through controlled instability.</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
-
 
 # ── Input ─────────────────────────────────────────────────────────────────────
 scenario = st.text_area(
@@ -320,22 +314,68 @@ if st.button("Run Alternate", type="primary"):
 
     np.random.seed(42)  # fixed seed — no user control needed
 
-    with st.spinner("Generating parallel futures..."):
-        futures = generate_futures(scenario)
+    # ── Streaming progress (feels faster) ────────────────────────────────────
+    st.divider()
+    st.markdown(
+        '<p style="font-family: Space Mono, monospace; font-size:0.75rem; color:#8b5cf6; letter-spacing:2px; text-transform:uppercase; margin-bottom:0.6rem;">⏳ Generating parallel futures</p>',
+        unsafe_allow_html=True
+    )
+
+    progress_text = st.empty()
+    progress_bar = st.progress(0)
+
+    futures = []
+    total = len(AGENT_ORDER)
+
+    for idx, agent_name in enumerate(AGENT_ORDER, start=1):
+        progress_text.markdown(
+            f"<p style='color:#9ca3af; margin:0;'>Generating <strong>{agent_name}</strong>…</p>",
+            unsafe_allow_html=True
+        )
+
+        try:
+            # IMPORTANT: This uses generate_one_future (not generate_futures)
+            f = generate_one_future(agent_name, scenario)
+        except Exception as e:
+            # Keep UI alive even if something unexpected happens
+            f = {
+                "name": agent_name,
+                "narrative": f"Failed to generate output for {agent_name}.",
+                "headlines": [],
+                "strategy": "",
+                "vulnerabilities": [],
+                "tone_score": 1.0,
+                "risk_score": 1.0,
+                "source": "Fallback",
+                "error": f"{type(e).__name__}: {str(e)}",
+            }
+
+        futures.append(f)
+
+        progress_bar.progress(int((idx / total) * 100))
+        progress_text.markdown(
+            f"<p style='color:#9ca3af; margin:0;'>Generating <strong>{agent_name}</strong>… ✅</p>",
+            unsafe_allow_html=True
+        )
+
+    progress_text.markdown(
+        "<p style='color:#9ca3af; margin:0;'><strong>Done.</strong> Rendering results…</p>",
+        unsafe_allow_html=True
+    )
+
+    # ── Score + simulate ─────────────────────────────────────────────────────
     scores = score_futures(futures)
     trajectories = simulate_trajectories(scores, steps=24)  # fixed 24-month horizon
 
     st.divider()
 
-    # ── Winner (computed BEFORE agent cards so it shows on top) ──────────────
+    # ── Winner ───────────────────────────────────────────────────────────────
     final = [(name, curve[-1]) for name, curve in trajectories.items()]
     winner_name, winner_val = max(final, key=lambda x: x[1])
 
-    # Find winner's data for the reason
     winner_future = next((f for f in futures if f["name"] == winner_name), {})
     winner_score_data = next((s for s in scores if s["name"] == winner_name), {})
 
-    # Build a dynamic reason from the scores
     inf = winner_score_data.get("influence", 0)
     stab = winner_score_data.get("stability", 0)
     risk = winner_score_data.get("risk", 0)
@@ -380,7 +420,7 @@ if st.button("Run Alternate", type="primary"):
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Influence Chart (below winner, above agent cards) ────────────────────
+    # ── Influence Chart ──────────────────────────────────────────────────────
     AGENT_COLORS = {
         "Visionary": "#8b5cf6",
         "Realist": "#3b82f6",
@@ -407,7 +447,7 @@ if st.button("Run Alternate", type="primary"):
     for spine in ax.spines.values():
         spine.set_edgecolor("#1f2937")
 
-    legend = ax.legend(framealpha=0, labelcolor="white", fontsize=9)
+    ax.legend(framealpha=0, labelcolor="white", fontsize=9)
     st.pyplot(fig)
 
     st.markdown("""
@@ -444,14 +484,13 @@ if st.button("Run Alternate", type="primary"):
 
     for i, f in enumerate(futures):
         s = scores[i]
-        agent_name = f["name"]
+        agent_name = f.get("name", f"Agent {i+1}")
         color = AGENT_COLORS.get(agent_name, "#ffffff")
-        source_label = f.get("source", "Unknown")
 
-        # Use actual model name from env if LLM-powered
-        if "MiniMax" in source_label or source_label in ("LLM",):
+        source_label = f.get("source", "Unknown")
+        if source_label in ("LLM", "MiniMax"):
             display_source = f"Model: {MINIMAX_MODEL}"
-        elif source_label == "Fallback":
+        elif source_label in ("Fallback", "MOCK"):
             display_source = "Source: Fallback (mock)"
         else:
             display_source = f"Source: {source_label}"
@@ -473,7 +512,6 @@ if st.button("Run Alternate", type="primary"):
                 unsafe_allow_html=True
             )
 
-            # Metrics with labels and mini progress bars
             for key in ["influence", "stability", "risk"]:
                 meta = METRIC_META[key]
                 val = s[key]
